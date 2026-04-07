@@ -1,0 +1,20 @@
+name: Street Cleaning Check
+
+on:
+  schedule:
+    # Every 30 minutes — free on GitHub Actions
+    - cron: '*/30 * * * *'
+  workflow_dispatch:  # allow manual trigger for testing
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call cron endpoint
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.APP_URL }}/api/cron/check-cleaning" \
+            | tee response.json
+          cat response.json
