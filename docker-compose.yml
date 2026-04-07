@@ -1,0 +1,36 @@
+services:
+
+  # ── Development ─────────────────────────────────────────────────────────────
+  # Hot-reload dev server. Access at http://localhost:5173
+  # The src/ directory is bind-mounted so edits on the host reflect instantly.
+  dev:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules   # anonymous volume keeps container deps
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+    env_file:
+      - path: .env
+        required: false
+    command: sh -c "npm install && npm run dev"
+    profiles: [dev]
+
+  # ── Production ──────────────────────────────────────────────────────────────
+  # Built PWA served by nginx. Access at http://localhost:8080
+  app:
+    build:
+      context: .
+      target: production
+    ports:
+      - "8080:80"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    profiles: [prod]
+
+volumes:
+  node_modules:

@@ -1,0 +1,29 @@
+# Fly.io configuration — Docker-based deployment
+# Free tier: 3 shared VMs, 160GB outbound/month, automatic HTTPS
+# Docs: https://fly.io/docs/
+
+app = "parking-alert-sf"   # change this to a unique name, e.g. "parking-alert-yourname"
+primary_region = "sjc"     # San Jose — closest to SF
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[services]]
+  internal_port = 80
+  protocol      = "tcp"
+  auto_stop_machines  = true   # scale to zero when idle (free tier friendly)
+  auto_start_machines = true
+
+  [[services.ports]]
+    port     = 80
+    handlers = ["http"]
+    force_https = true         # redirect HTTP → HTTPS automatically
+
+  [[services.ports]]
+    port     = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type       = "requests"
+    soft_limit = 200
+    hard_limit = 250
