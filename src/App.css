@@ -1,3 +1,38 @@
+/* ─── Map ────────────────────────────────────────────────────────────────── */
+
+.map-wrapper {
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  border: 2px solid transparent;
+  transition: border-color 0.3s;
+}
+.map-wrapper.map-warning { border-color: var(--yellow); }
+.map-wrapper.map-danger  { border-color: var(--red); }
+
+.parking-map {
+  height: 240px;
+  width: 100%;
+  z-index: 0;
+}
+
+.map-car-pin {
+  font-size: 28px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));
+}
+
+/* Leaflet popup tweaks */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px !important;
+  font-family: inherit !important;
+}
+.leaflet-popup-content {
+  margin: 10px 14px !important;
+  font-size: 0.88rem !important;
+  line-height: 1.5 !important;
+}
+
 /* ─── Layout ─────────────────────────────────────────────────────────────── */
 
 .app {

@@ -5,6 +5,7 @@ import { ParkButton } from './components/ParkButton'
 import { SavedLocation } from './components/SavedLocation'
 import { StreetCleaningStatus } from './components/StreetCleaningStatus'
 import { NotificationPermission } from './components/NotificationPermission'
+import { ParkingMap } from './components/ParkingMap'
 import './App.css'
 
 export default function App() {
@@ -38,7 +39,10 @@ export default function App() {
           isLocating={status === 'locating'}
         />
 
-        {/* Saved location card */}
+        {/* Map + saved location card */}
+        {parkedLocation && (
+          <ParkingMap location={parkedLocation} activeWindows={activeWindows} />
+        )}
         {parkedLocation && <SavedLocation location={parkedLocation} />}
 
         {/* Street cleaning status — only shows after a spot is saved */}
