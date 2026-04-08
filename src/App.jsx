@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { useParking } from './hooks/useParking'
 import { useStreetCleaning } from './hooks/useStreetCleaning'
 import { ParkButton } from './components/ParkButton'
@@ -6,13 +6,12 @@ import { SavedLocation } from './components/SavedLocation'
 import { StreetCleaningStatus } from './components/StreetCleaningStatus'
 import { NotificationPermission } from './components/NotificationPermission'
 import { ParkingMap } from './components/ParkingMap'
+import { IOSBanner } from './components/IOSBanner'
 import './App.css'
 
 export default function App() {
   const { parkedLocation, status, error: parkError, parkHere, clearParking } = useParking()
-  const { schedule, activeWindows, loading, error: scheduleError, refresh } = useStreetCleaning(parkedLocation)
-
-  const [warnMinutes] = useState(30)
+  const { schedule, activeWindows, loading, error: scheduleError, lastUpdated, refresh } = useStreetCleaning(parkedLocation)
 
   return (
     <div className="app">
@@ -22,16 +21,15 @@ export default function App() {
       </header>
 
       <main className="app-main">
+        <IOSBanner />
         <NotificationPermission />
 
-        {/* Error from location/geocoding */}
         {parkError && (
           <div className="banner banner-error">
             <p>{parkError}</p>
           </div>
         )}
 
-        {/* Primary action */}
         <ParkButton
           onPark={parkHere}
           onClear={clearParking}
@@ -39,13 +37,12 @@ export default function App() {
           isLocating={status === 'locating'}
         />
 
-        {/* Map + saved location card */}
         {parkedLocation && (
           <ParkingMap location={parkedLocation} activeWindows={activeWindows} />
         )}
+
         {parkedLocation && <SavedLocation location={parkedLocation} />}
 
-        {/* Street cleaning status — only shows after a spot is saved */}
         {parkedLocation && (
           <StreetCleaningStatus
             activeWindows={activeWindows}
@@ -53,10 +50,10 @@ export default function App() {
             loading={loading}
             error={scheduleError}
             onRefresh={refresh}
+            lastUpdated={lastUpdated}
           />
         )}
 
-        {/* Empty state */}
         {!parkedLocation && (
           <div className="empty-state">
             <div className="empty-icon" aria-hidden="true">🚗</div>
@@ -67,11 +64,8 @@ export default function App() {
 
       <footer className="app-footer">
         <p>
-          Works in San Francisco only · Data from{' '}
+          San Francisco only · Data from{' '}
           <a href="https://data.sfgov.org" target="_blank" rel="noopener noreferrer">SF Open Data</a>
-        </p>
-        <p className="footer-note">
-          Notifications work best on Android Chrome. For iOS, keep the app open.
         </p>
       </footer>
     </div>

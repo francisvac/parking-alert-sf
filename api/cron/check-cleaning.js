@@ -62,7 +62,8 @@ export default async function handler(req, res) {
     const updates = []
 
     for (const [streetName, streetDevices] of Object.entries(byStreet)) {
-      const windows = await getUpcomingWindows(streetName, now, LOOKAHEAD_MINUTES)
+      // Pass the first device for coordinates; all devices on the same street share them
+      const windows = await getUpcomingWindows(streetDevices[0], now, LOOKAHEAD_MINUTES)
       if (windows.length === 0) continue
 
       // Use the first upcoming window as the notification target
@@ -132,28 +133,43 @@ export default async function handler(req, res) {
 
 // ─── SF Open Data ─────────────────────────────────────────────────────────────
 
-async function getUpcomingWindows(streetName, now, lookaheadMinutes) {
-  const keyword = extractStreetKeyword(streetName)
-  const qs = `$where=upper(corridor) like '%25${keyword.toUpperCase()}%25'&$limit=200`
+async function getUpcomingWindows(device, now, lookaheadMinutes) {
+  const sfNow      = toSFTime(now)
+  const dayAbbr    = getDayAbbr(sfNow)
+  const weekOfMonth = getWeekOfMonth(sfNow)
+  const sfNowMin   = sfNow.getHours() * 60 + sfNow.getMinutes()
+  const isHoliday  = isSFHoliday(sfNow)
 
   const headers = {}
   if (process.env.SF_APP_TOKEN) headers['X-App-Token'] = process.env.SF_APP_TOKEN
 
-  const res = await fetch(`${SF_API}?${qs}`, { headers })
-  if (!res.ok) return []
+  // Use spatial query when coordinates are available (most accurate)
+  // Fall back to keyword search on street name
+  let rawEntries = []
+  if (device.lat && device.lng) {
+    const qs = `$where=within_circle(line,${device.lat},${device.lng},150)&$limit=50`
+    const res = await fetch(`${SF_API}?${qs}`, { headers, signal: AbortSignal.timeout(8000) })
+    if (res.ok) rawEntries = await res.json()
+  }
 
-  const entries = await res.json()
-  const sfNow = toSFTime(now)
-  const dayAbbr = getDayAbbr(sfNow)
-  const weekOfMonth = getWeekOfMonth(sfNow)
-  const sfNowMin = sfNow.getHours() * 60 + sfNow.getMinutes()
+  if (!Array.isArray(rawEntries) || rawEntries.length === 0) {
+    const keyword = extractStreetKeyword(device.streetName || '')
+    if (keyword) {
+      const qs = `$where=upper(corridor) like '%25${keyword}%25'&$limit=100`
+      const res = await fetch(`${SF_API}?${qs}`, { headers, signal: AbortSignal.timeout(8000) })
+      if (res.ok) rawEntries = await res.json()
+    }
+  }
 
-  return entries
-    .map((e) => parseEntry(e))
+  if (!Array.isArray(rawEntries)) return []
+
+  return rawEntries
+    .map(parseEntry)
     .filter(Boolean)
     .filter((e) => {
       if (e.weekday !== dayAbbr) return false
       if (!e.weeks.includes(weekOfMonth)) return false
+      if (isHoliday && !e.appliesToHolidays) return false
       const isActive   = sfNowMin >= e.startMinutes && sfNowMin < e.endMinutes
       const isUpcoming = sfNowMin < e.startMinutes && (e.startMinutes - sfNowMin) <= lookaheadMinutes
       return isActive || isUpcoming
@@ -173,7 +189,14 @@ function parseEntry(raw) {
     const endMinutes   = parseHour(raw.tohour)
     if (startMinutes === null || endMinutes === null) return null
     const weeks = [1,2,3,4,5].filter((n) => raw[`week${n}`] === '1' || raw[`week${n}`] === 1)
-    return { weekday: normaliseWeekday(raw.weekday || ''), startMinutes, endMinutes, weeks }
+    if (weeks.length === 0) return null
+    return {
+      weekday: normaliseWeekday(raw.weekday || ''),
+      startMinutes,
+      endMinutes,
+      weeks,
+      appliesToHolidays: raw.holidays === '1'
+    }
   } catch { return null }
 }
 
@@ -190,6 +213,26 @@ function extractStreetKeyword(name) {
     .replace(/[^a-zA-Z0-9\s]/g, '')
     .trim()
     .toUpperCase()
+}
+
+function isSFHoliday(date) {
+  const m = date.getMonth() + 1
+  const d = date.getDate()
+  const dow = date.getDay()
+  const wom = Math.ceil(d / 7)
+  if (m===1&&d===1)   return true
+  if (m===3&&d===31)  return true
+  if (m===6&&d===19)  return true
+  if (m===7&&d===4)   return true
+  if (m===11&&d===11) return true
+  if (m===12&&d===25) return true
+  if (m===1&&dow===1&&wom===3)       return true  // MLK Jr
+  if (m===2&&dow===1&&wom===3)       return true  // Presidents Day
+  if (m===5&&dow===1&&d>=25)         return true  // Memorial Day
+  if (m===9&&dow===1&&wom===1)       return true  // Labor Day
+  if (m===10&&dow===1&&wom===2)      return true  // Indigenous Peoples Day
+  if (m===11&&dow===4&&wom===4)      return true  // Thanksgiving
+  return false
 }
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────

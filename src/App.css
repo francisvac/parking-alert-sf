@@ -264,6 +264,19 @@
 .banner-warning { background: var(--yellow-light); color: #7a5900; }
 .banner-error   { background: var(--red-light); color: #8c1a0e; }
 
+.ios-banner { flex-direction: column; align-items: flex-start; gap: 8px; }
+.ios-banner-content strong { display: block; margin-bottom: 4px; }
+.ios-banner-content p { margin: 0; font-size: 0.83rem; }
+.share-icon { font-style: normal; }
+
+.holiday-note { color: var(--grey-600); font-style: italic; }
+
+.header-right { display: flex; align-items: center; gap: 8px; }
+.last-updated { font-size: 0.72rem; color: var(--grey-600); }
+
+.time-cell   { white-space: nowrap; }
+.limits-cell { font-size: 0.78rem; color: var(--grey-600); }
+
 /* ─── Empty State ────────────────────────────────────────────────────────── */
 
 .empty-state {

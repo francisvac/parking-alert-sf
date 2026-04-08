@@ -24,7 +24,7 @@ export function getCurrentPosition() {
       (pos) => resolve({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy  // metres
+        accuracy: pos.coords.accuracy
       }),
       (err) => reject(new Error(geolocationErrorMessage(err))),
       GEO_OPTIONS
@@ -64,19 +64,30 @@ export function stopWatchingPosition(watchId) {
 const STORAGE_KEY = 'parked_location'
 
 export function saveParkedLocation(location) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    ...location,
-    savedAt: new Date().toISOString()
-  }))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      ...location,
+      savedAt: new Date().toISOString()
+    }))
+  } catch {
+    // localStorage may be unavailable in private browsing — non-fatal
+    console.warn('[geolocation] Could not save parked location to localStorage')
+  }
 }
 
 export function loadParkedLocation() {
-  const raw = localStorage.getItem(STORAGE_KEY)
-  return raw ? JSON.parse(raw) : null
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    // Corrupted data — clear and start fresh
+    try { localStorage.removeItem(STORAGE_KEY) } catch {}
+    return null
+  }
 }
 
 export function clearParkedLocation() {
-  localStorage.removeItem(STORAGE_KEY)
+  try { localStorage.removeItem(STORAGE_KEY) } catch {}
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
