@@ -326,15 +326,37 @@ function ptToLineString(lat, lng, coords) {
   for (let i = 0; i < coords.length - 1; i++) {
     const [aLng, aLat] = coords[i]
     const [bLng, bLat] = coords[i + 1]
-    const d = ptToSegment(lat, lng, aLat, aLng, bLat, bLng)
-    if (d < min) min = d
+    const { dist } = closestOnSegment(lat, lng, aLat, aLng, bLat, bLng)
+    if (dist < min) min = dist
   }
   return min
 }
 
-function ptToSegment(pLat, pLng, aLat, aLng, bLat, bLng) {
+/**
+ * Snap a GPS point to the nearest point on a street block's centerline.
+ * Accepts Leaflet-format coordinates ([lat, lng] pairs) as stored in
+ * parsed entries' `coordinates` field.
+ *
+ * @param {number} lat
+ * @param {number} lng
+ * @param {[number,number][]} leafletCoords - [lat, lng] pairs
+ * @returns {{ lat: number, lng: number }}
+ */
+export function snapToRoad(lat, lng, leafletCoords) {
+  let minDist = Infinity
+  let snapped = { lat, lng }
+  for (let i = 0; i < leafletCoords.length - 1; i++) {
+    const [aLat, aLng] = leafletCoords[i]
+    const [bLat, bLng] = leafletCoords[i + 1]
+    const { dist, lat: cLat, lng: cLng } = closestOnSegment(lat, lng, aLat, aLng, bLat, bLng)
+    if (dist < minDist) { minDist = dist; snapped = { lat: cLat, lng: cLng } }
+  }
+  return snapped
+}
+
+/** Returns the closest point on a segment and the distance to it (metres). */
+function closestOnSegment(pLat, pLng, aLat, aLng, bLat, bLng) {
   const cosLat = Math.cos((pLat * Math.PI) / 180)
-  // Scale lng to equal-distance units
   const px = pLng * cosLat, py = pLat
   const ax = aLng * cosLat, ay = aLat
   const bx = bLng * cosLat, by = bLat
@@ -342,7 +364,8 @@ function ptToSegment(pLat, pLng, aLat, aLng, bLat, bLng) {
   const lenSq = dx * dx + dy * dy
   const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
   const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt(((py - cy) * 111320) ** 2 + ((px - cx) * 111320) ** 2)
+  const dist = Math.sqrt(((py - cy) * 111320) ** 2 + ((px - cx) * 111320) ** 2)
+  return { dist, lat: cy, lng: cx / cosLat }
 }
 
 // ─── Street name helpers ──────────────────────────────────────────────────────

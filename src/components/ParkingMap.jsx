@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { snapToRoad } from '../services/sfApi'
 
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
@@ -65,6 +66,13 @@ export function ParkingMap({ location, schedule, activeWindows }) {
     }
   }
 
+  // Snap car marker to the nearest road edge.
+  // schedule is sorted nearest-first by fetchByCoords; pick the closest entry with coords.
+  const nearestBlock = (schedule || []).find((e) => e.coordinates)
+  const snapped = nearestBlock
+    ? snapToRoad(lat, lng, nearestBlock.coordinates)
+    : { lat, lng }
+
   return (
     <div className={`map-wrapper ${isActive ? 'map-danger' : hasAlert ? 'map-warning' : ''}`}>
       <MapContainer
@@ -122,8 +130,8 @@ export function ParkingMap({ location, schedule, activeWindows }) {
           )
         })}
 
-        {/* Car marker */}
-        <Marker position={[lat, lng]} icon={carIcon}>
+        {/* Car marker — snapped to nearest road centerline when block data is available */}
+        <Marker position={[snapped.lat, snapped.lng]} icon={carIcon}>
           <Popup>
             <strong>{streetName || 'Parked here'}</strong>
             {fullAddress && <><br /><span style={{ fontSize: '0.8em', color: '#666' }}>{fullAddress}</span></>}
