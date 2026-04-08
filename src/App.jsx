@@ -38,7 +38,7 @@ export default function App() {
         />
 
         {parkedLocation && (
-          <ParkingMap location={parkedLocation} activeWindows={activeWindows} />
+          <ParkingMap location={parkedLocation} schedule={schedule} activeWindows={activeWindows} />
         )}
 
         {parkedLocation && <SavedLocation location={parkedLocation} />}

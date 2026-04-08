@@ -41,7 +41,8 @@ export function useStreetCleaning(parkedLocation, warnMinutesBefore = 30) {
       const entries = await fetchScheduleForLocation(
         location.lat,
         location.lng,
-        location.streetName
+        location.streetName,
+        location.accuracy
       )
       setSchedule(entries)
 

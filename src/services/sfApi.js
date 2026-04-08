@@ -47,23 +47,26 @@ function toCache(key, data) {
 
 /**
  * Primary fetch strategy:
- *   1. Try GPS-based spatial query — `within_circle(line, lat, lng, 150m)`
- *      Returns only the blocks the user is physically next to. Most accurate.
- *   2. Fall back to keyword search on `corridor` if spatial returns nothing
- *      (e.g. GPS inaccuracy places the user mid-block away from any segment).
+ *   1. GPS spatial query — `within_circle(line, lat, lng, radius)`
+ *      Radius is derived from the GPS accuracy reading so we cast the
+ *      smallest net that still reliably captures the parked block.
+ *      Results are then ranked by their true point-to-segment distance
+ *      and filtered to the blocks the user is most likely parked next to.
+ *   2. Keyword fallback on `corridor` if spatial returns nothing.
  *
  * @param {number} lat
  * @param {number} lng
  * @param {string} streetName - from reverse geocoder, used as fallback keyword
+ * @param {number} [accuracy]  - GPS accuracy in metres (from Geolocation API)
  * @returns {Promise<ScheduleEntry[]>}
  */
-export async function fetchScheduleForLocation(lat, lng, streetName) {
+export async function fetchScheduleForLocation(lat, lng, streetName, accuracy) {
   const key = cacheKey(lat, lng)
   const cached = fromCache(key)
   if (cached) return cached
 
-  // 1. Spatial query — most accurate
-  let entries = await fetchByCoords(lat, lng)
+  // 1. Spatial query with dynamic radius
+  let entries = await fetchByCoords(lat, lng, accuracy)
 
   // 2. Keyword fallback
   if (entries.length === 0 && streetName) {
@@ -125,17 +128,42 @@ export function findActiveOrUpcoming(entries, now = new Date(), lookaheadHours =
 
 // ─── Fetch strategies ─────────────────────────────────────────────────────────
 
-async function fetchByCoords(lat, lng, radiusMetres = 150) {
+/**
+ * Spatial fetch with distance ranking.
+ *
+ * - Radius = max(accuracy × 3, 120m), capped at 350m.
+ *   Multiplying by 3 gives a comfortable buffer around the GPS dot.
+ * - After fetching, compute the true point-to-segment distance for every
+ *   returned block and keep only the ones within a tight "match" threshold.
+ * - Match threshold = max(accuracy, 60m), capped at 120m.
+ *   This ensures we return the actual block(s) the car is parked on,
+ *   not every block within the search circle.
+ * - Results are sorted nearest-first so callers always see the most
+ *   relevant block at index 0.
+ */
+async function fetchByCoords(lat, lng, accuracy) {
   try {
-    // URLSearchParams handles proper encoding of ( ) , spaces etc.
+    const accuracyM     = typeof accuracy === 'number' && accuracy > 0 ? accuracy : 30
+    const searchRadius  = Math.min(Math.max(accuracyM * 3, 120), 350)
+    const matchThreshold = Math.min(Math.max(accuracyM, 60), 120)
+
     const params = new URLSearchParams({
-      '$where': `within_circle(line,${lat},${lng},${radiusMetres})`,
-      '$limit': '50'
+      '$where': `within_circle(line,${lat},${lng},${searchRadius})`,
+      '$limit': '100'
     })
     const raw = await sfFetch(params.toString())
-    return Array.isArray(raw) ? raw.map(parseEntry).filter(Boolean) : []
+    if (!Array.isArray(raw)) return []
+
+    return raw
+      .map((r) => {
+        const entry = parseEntry(r)
+        if (!entry) return null
+        const dist = r.line?.coordinates ? ptToLineString(lat, lng, r.line.coordinates) : Infinity
+        return { ...entry, distanceMeters: Math.round(dist) }
+      })
+      .filter((e) => e && e.distanceMeters <= matchThreshold)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
   } catch {
-    // Spatial query failed — fall through to keyword search
     return []
   }
 }
@@ -185,20 +213,27 @@ function parseEntry(raw) {
     if (startMinutes === null || endMinutes === null) return null
 
     const weeks = [1, 2, 3, 4, 5].filter((n) => raw[`week${n}`] === '1' || raw[`week${n}`] === 1)
-    if (weeks.length === 0) return null  // No applicable weeks — skip
+    if (weeks.length === 0) return null
+
+    // Convert GeoJSON [lng, lat] coordinates to Leaflet [lat, lng] for the map
+    const coordinates = raw.line?.coordinates
+      ? raw.line.coordinates.map(([lng, lat]) => [lat, lng])
+      : null
 
     return {
       cnn:               raw.cnn || '',
       streetName:        raw.corridor || '',
       limits:            raw.limits?.trim().replace(/\s{2,}/g, ' – ') || '',
       blockSide:         raw.blockside || '',
+      side:              raw.cnnrightleft || '',   // 'L' or 'R'
       weekday:           normaliseWeekday(raw.weekday || ''),
       startMinutes,
       endMinutes,
       weeks,
       appliesToHolidays: raw.holidays === '1',
       rawStartTime:      formatHour(startMinutes),
-      rawEndTime:        formatHour(endMinutes)
+      rawEndTime:        formatHour(endMinutes),
+      coordinates        // Leaflet [lat, lng] pairs for Polyline rendering
     }
   } catch {
     return null
@@ -273,6 +308,41 @@ function isSFHoliday(date) {
   if (m === 11 && dow === 4 && weekOfMonth === 4) return true
 
   return false
+}
+
+// ─── Point-to-geometry distance (metres) ─────────────────────────────────────
+
+/**
+ * Minimum distance from a GPS point to a GeoJSON LineString.
+ * Uses a flat-earth approximation — accurate to < 0.1% for distances under 1 km.
+ *
+ * @param {number} lat  - point latitude
+ * @param {number} lng  - point longitude
+ * @param {[number,number][]} coords - GeoJSON coordinates array ([lng, lat] pairs)
+ * @returns {number} distance in metres
+ */
+function ptToLineString(lat, lng, coords) {
+  let min = Infinity
+  for (let i = 0; i < coords.length - 1; i++) {
+    const [aLng, aLat] = coords[i]
+    const [bLng, bLat] = coords[i + 1]
+    const d = ptToSegment(lat, lng, aLat, aLng, bLat, bLng)
+    if (d < min) min = d
+  }
+  return min
+}
+
+function ptToSegment(pLat, pLng, aLat, aLng, bLat, bLng) {
+  const cosLat = Math.cos((pLat * Math.PI) / 180)
+  // Scale lng to equal-distance units
+  const px = pLng * cosLat, py = pLat
+  const ax = aLng * cosLat, ay = aLat
+  const bx = bLng * cosLat, by = bLat
+  const dx = bx - ax, dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+  const cx = ax + t * dx, cy = ay + t * dy
+  return Math.sqrt(((py - cy) * 111320) ** 2 + ((px - cx) * 111320) ** 2)
 }
 
 // ─── Street name helpers ──────────────────────────────────────────────────────

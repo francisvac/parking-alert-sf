@@ -1,9 +1,8 @@
 import React, { useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-// Fix Leaflet's default marker icons broken by bundlers (missing asset URLs)
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
@@ -15,7 +14,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow
 })
 
-// Custom blue car marker pin
 const carIcon = new L.DivIcon({
   className: '',
   html: `<div class="map-car-pin" aria-label="Parked car">🚗</div>`,
@@ -24,9 +22,6 @@ const carIcon = new L.DivIcon({
   popupAnchor: [0, -20]
 })
 
-/**
- * Smoothly re-centres the map whenever the position changes.
- */
 function RecenterMap({ lat, lng }) {
   const map = useMap()
   useEffect(() => {
@@ -36,19 +31,39 @@ function RecenterMap({ lat, lng }) {
 }
 
 /**
- * Displays the saved parking location on an OpenStreetMap tile layer.
- *
- * @param {object} props.location - { lat, lng, accuracy, streetName, fullAddress }
- * @param {ActiveCleaning[]} props.activeWindows - from useStreetCleaning
+ * Color scheme for street blocks:
+ *   Red    — cleaning active right now
+ *   Orange — cleaning within 2 hours
+ *   Blue   — no cleaning soon (informational)
  */
-export function ParkingMap({ location, activeWindows }) {
+function blockColor(cnn, activeWindows) {
+  const match = activeWindows?.find((w) => w.cnn === cnn)
+  if (!match) return { color: '#1a73e8', weight: 4, opacity: 0.7 }
+  if (match.isActive) return { color: '#d93025', weight: 5, opacity: 0.9 }
+  return { color: '#f9ab00', weight: 5, opacity: 0.9 }
+}
+
+/**
+ * @param {object} props.location     - { lat, lng, accuracy, streetName, fullAddress }
+ * @param {ScheduleEntry[]} props.schedule  - full schedule (for drawing blocks)
+ * @param {ActiveCleaning[]} props.activeWindows
+ */
+export function ParkingMap({ location, schedule, activeWindows }) {
   if (!location) return null
 
   const { lat, lng, accuracy, fullAddress, streetName } = location
-  const hasAlert = activeWindows && activeWindows.length > 0
-  const isActive = hasAlert && activeWindows.some((w) => w.isActive)
+  const isActive  = activeWindows?.some((w) => w.isActive)
+  const hasAlert  = activeWindows?.length > 0
 
-  const circleColor = isActive ? '#d93025' : hasAlert ? '#f9ab00' : '#1a73e8'
+  // Deduplicate blocks by CNN — multiple schedule rows share the same physical block
+  const uniqueBlocks = []
+  const seenCNNs = new Set()
+  for (const entry of (schedule || [])) {
+    if (entry.coordinates && !seenCNNs.has(entry.cnn)) {
+      seenCNNs.add(entry.cnn)
+      uniqueBlocks.push(entry)
+    }
+  }
 
   return (
     <div className={`map-wrapper ${isActive ? 'map-danger' : hasAlert ? 'map-warning' : ''}`}>
@@ -68,16 +83,46 @@ export function ParkingMap({ location, activeWindows }) {
 
         <RecenterMap lat={lat} lng={lng} />
 
-        {/* GPS accuracy radius */}
+        {/* GPS accuracy radius — helps user understand position precision */}
         {accuracy && (
           <Circle
             center={[lat, lng]}
             radius={accuracy}
-            pathOptions={{ color: circleColor, fillColor: circleColor, fillOpacity: 0.08, weight: 1.5 }}
+            pathOptions={{ color: '#1a73e8', fillColor: '#1a73e8', fillOpacity: 0.06, weight: 1, dashArray: '4' }}
           />
         )}
 
-        {/* Parking marker */}
+        {/* Draw each matched street block as a Polyline */}
+        {uniqueBlocks.map((block) => {
+          const style  = blockColor(block.cnn, activeWindows)
+          const active = activeWindows?.find((w) => w.cnn === block.cnn)
+          const label  = active
+            ? active.isActive
+              ? `Cleaning NOW until ${new Date(active.cleaningEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+              : `Cleaning at ${new Date(active.cleaningStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+            : `${block.streetName} — no cleaning soon`
+
+          return (
+            <Polyline
+              key={block.cnn}
+              positions={block.coordinates}
+              pathOptions={style}
+            >
+              <Popup>
+                <strong>{block.streetName}</strong>
+                {block.limits && <><br /><span style={{ fontSize: '0.8em', color: '#555' }}>{block.limits}</span></>}
+                {block.blockSide && <><br /><span style={{ fontSize: '0.8em', color: '#555' }}>{block.blockSide} side</span></>}
+                <br />
+                <span style={{ fontSize: '0.85em', fontWeight: 600, color: style.color }}>{label}</span>
+                {block.distanceMeters != null && (
+                  <><br /><span style={{ fontSize: '0.75em', color: '#888' }}>{block.distanceMeters}m from your pin</span></>
+                )}
+              </Popup>
+            </Polyline>
+          )
+        })}
+
+        {/* Car marker */}
         <Marker position={[lat, lng]} icon={carIcon}>
           <Popup>
             <strong>{streetName || 'Parked here'}</strong>
@@ -86,7 +131,7 @@ export function ParkingMap({ location, activeWindows }) {
               <>
                 <br />
                 <span style={{ color: isActive ? '#d93025' : '#7a5900', fontWeight: 600, fontSize: '0.85em' }}>
-                  {isActive ? '⚠ Street cleaning NOW' : '⚠ Street cleaning soon'}
+                  {isActive ? '⚠ Street cleaning NOW' : '⏰ Street cleaning soon'}
                 </span>
               </>
             )}
