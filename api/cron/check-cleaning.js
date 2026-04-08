@@ -133,33 +133,29 @@ export default async function handler(req, res) {
 // ─── SF Open Data ─────────────────────────────────────────────────────────────
 
 async function getUpcomingWindows(streetName, now, lookaheadMinutes) {
-  const params = new URLSearchParams({
-    streetname: streetName,
-    '$limit': '100'
-  })
+  const keyword = extractStreetKeyword(streetName)
+  const qs = `$where=upper(corridor) like '%25${keyword.toUpperCase()}%25'&$limit=200`
+
   const headers = {}
   if (process.env.SF_APP_TOKEN) headers['X-App-Token'] = process.env.SF_APP_TOKEN
 
-  const res = await fetch(`${SF_API}?${params}`, { headers })
+  const res = await fetch(`${SF_API}?${qs}`, { headers })
   if (!res.ok) return []
 
   const entries = await res.json()
-  const dayName = getDayName(now)
-  const weekOfMonth = getWeekOfMonth(now)
-  const nowMin = now.getHours() * 60 + now.getMinutes()
   const sfNow = toSFTime(now)
+  const dayAbbr = getDayAbbr(sfNow)
+  const weekOfMonth = getWeekOfMonth(sfNow)
   const sfNowMin = sfNow.getHours() * 60 + sfNow.getMinutes()
 
   return entries
     .map((e) => parseEntry(e))
     .filter(Boolean)
     .filter((e) => {
-      if (normaliseDay(e.weekday) !== dayName) return false
+      if (e.weekday !== dayAbbr) return false
       if (!e.weeks.includes(weekOfMonth)) return false
-      const startMin = e.startMinutes
-      const endMin = e.endMinutes
-      const isActive = sfNowMin >= startMin && sfNowMin < endMin
-      const isUpcoming = sfNowMin < startMin && (startMin - sfNowMin) <= lookaheadMinutes
+      const isActive   = sfNowMin >= e.startMinutes && sfNowMin < e.endMinutes
+      const isUpcoming = sfNowMin < e.startMinutes && (e.startMinutes - sfNowMin) <= lookaheadMinutes
       return isActive || isUpcoming
     })
     .map((e) => {
@@ -173,44 +169,47 @@ async function getUpcomingWindows(streetName, now, lookaheadMinutes) {
 
 function parseEntry(raw) {
   try {
-    const startMinutes = parseTime(raw.starttime || raw.fromhour)
-    const endMinutes   = parseTime(raw.endtime   || raw.tohour)
+    const startMinutes = parseHour(raw.fromhour)
+    const endMinutes   = parseHour(raw.tohour)
     if (startMinutes === null || endMinutes === null) return null
-    const weeks = [1,2,3,4,5].filter((n) => {
-      const v = raw[`week${n}`]
-      return v === 'Yes' || v === true || v === 'true'
-    })
-    return { weekday: raw.weekday || '', startMinutes, endMinutes, weeks }
+    const weeks = [1,2,3,4,5].filter((n) => raw[`week${n}`] === '1' || raw[`week${n}`] === 1)
+    return { weekday: normaliseWeekday(raw.weekday || ''), startMinutes, endMinutes, weeks }
   } catch { return null }
 }
 
-function parseTime(str) {
-  if (!str) return null
-  const m = str.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i)
-  if (!m) return null
-  let h = parseInt(m[1], 10)
-  const min = parseInt(m[2], 10)
-  if (m[3]) {
-    if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12
-    if (m[3].toUpperCase() === 'AM' && h === 12) h = 0
-  }
-  return h * 60 + min
+function parseHour(val) {
+  if (val === null || val === undefined || val === '') return null
+  const h = parseInt(val, 10)
+  if (isNaN(h) || h < 0 || h > 23) return null
+  return h * 60
+}
+
+function extractStreetKeyword(name) {
+  return name
+    .replace(/\b(street|st|avenue|ave|boulevard|blvd|drive|dr|road|rd|way|lane|ln|court|ct|place|pl|terrace|ter|alley|aly)\b/gi, '')
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .trim()
+    .toUpperCase()
 }
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
-const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+const DAY_ABBRS = ['Sun','Mon','Tues','Wed','Thur','Fri','Sat']
 
-function getDayName(date) {
-  return DAYS[toSFTime(date).getDay()]
+function getDayAbbr(sfDate) {
+  return DAY_ABBRS[sfDate.getDay()]
 }
 
-function getWeekOfMonth(date) {
-  return Math.ceil(toSFTime(date).getDate() / 7)
+function getWeekOfMonth(sfDate) {
+  return Math.ceil(sfDate.getDate() / 7)
 }
 
-function normaliseDay(str) {
-  return DAYS.find((d) => d.toLowerCase() === (str || '').trim().toLowerCase()) || str
+function normaliseWeekday(str) {
+  const s = str.trim()
+  if (DAY_ABBRS.includes(s)) return s
+  const full = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+  const idx  = full.findIndex((d) => d.toLowerCase() === s.toLowerCase())
+  return idx >= 0 ? DAY_ABBRS[idx] : s
 }
 
 function toSFTime(date) {
