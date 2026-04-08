@@ -126,16 +126,28 @@ export function findActiveOrUpcoming(entries, now = new Date(), lookaheadHours =
 // ─── Fetch strategies ─────────────────────────────────────────────────────────
 
 async function fetchByCoords(lat, lng, radiusMetres = 150) {
-  const qs = `$where=within_circle(line,${lat},${lng},${radiusMetres})&$limit=50`
-  const raw = await sfFetch(qs)
-  return Array.isArray(raw) ? raw.map(parseEntry).filter(Boolean) : []
+  try {
+    // URLSearchParams handles proper encoding of ( ) , spaces etc.
+    const params = new URLSearchParams({
+      '$where': `within_circle(line,${lat},${lng},${radiusMetres})`,
+      '$limit': '50'
+    })
+    const raw = await sfFetch(params.toString())
+    return Array.isArray(raw) ? raw.map(parseEntry).filter(Boolean) : []
+  } catch {
+    // Spatial query failed — fall through to keyword search
+    return []
+  }
 }
 
 async function fetchByStreetName(streetName) {
   const keyword = extractStreetKeyword(streetName)
   if (!keyword) return []
-  const qs = `$where=upper(corridor) like '%25${keyword.toUpperCase()}%25'&$limit=100`
-  const raw = await sfFetch(qs)
+  const params = new URLSearchParams({
+    '$where': `upper(corridor) like '%${keyword.toUpperCase()}%'`,
+    '$limit': '100'
+  })
+  const raw = await sfFetch(params.toString())
   return Array.isArray(raw) ? raw.map(parseEntry).filter(Boolean) : []
 }
 
@@ -151,7 +163,8 @@ async function sfFetch(qs) {
     const res = await fetch(`${BASE_URL}?${qs}`, { headers, signal: controller.signal })
 
     if (!res.ok) {
-      throw new Error(`SF Open Data API error: ${res.status} ${res.statusText}`)
+      const body = await res.text().catch(() => '')
+      throw new Error(`SF Open Data API error: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`)
     }
 
     return res.json()
